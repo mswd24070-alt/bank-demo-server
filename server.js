@@ -1,414 +1,439 @@
 const express = require("express");
+const cors = require("cors");
+const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ===============================
-// Middleware
-// ===============================
-
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static("public"));
+app.use(express.static(path.join(__dirname, "public")));
 
-// ===============================
-// Supabase
-// ===============================
+/*
+==================================================
+SUPABASE
+==================================================
+*/
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_URL =
+    process.env.SUPABASE_URL ||
+    "https://xmegksqwdxutsrpdljaq.supabase.co";
 
-if (!supabaseUrl || !supabaseKey) {
-  console.error("ERROR: Missing Supabase environment variables.");
-  process.exit(1);
-}
+const SUPABASE_KEY =
+    process.env.SUPABASE_KEY ||
+    "sb_publishable_2yjTS1DTrevOGAuRMmzQ3Q_dft1r1RT";
 
 const supabase = createClient(
-  supabaseUrl,
-  supabaseKey
+    SUPABASE_URL,
+    SUPABASE_KEY
 );
 
-// ===============================
-// Admin protection
-// ===============================
+/*
+==================================================
+HELPERS
+==================================================
+*/
 
-const ADMIN_KEY = process.env.ADMIN_KEY;
+function fixVal(value) {
+    if (value === null || value === undefined) {
+        return "0";
+    }
 
-function checkAdmin(req, res, next) {
-  if (!ADMIN_KEY) {
-    return res.status(500).json({
-      success: false,
-      message: "ADMIN_KEY is not configured"
-    });
-  }
-
-  const providedKey = req.headers["x-admin-key"];
-
-  if (!providedKey || providedKey !== ADMIN_KEY) {
-    return res.status(401).json({
-      success: false,
-      message: "Unauthorized"
-    });
-  }
-
-  next();
+    return String(value).trim();
 }
 
-// ===============================
-// Health check
-// ===============================
+/*
+==================================================
+HOME
+==================================================
+*/
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    service: "demo-login-server",
-    database: "supabase"
-  });
-});
-
-// ===============================
-// Generate 7-digit account number
-// ===============================
-
-async function generateAccountNumber() {
-  for (let attempt = 0; attempt < 30; attempt++) {
-
-    const accountNumber = String(
-      Math.floor(1000000 + Math.random() * 9000000)
-    );
-
-    const { data, error } = await supabase
-      .from("demo_accounts")
-      .select("id")
-      .eq("account_number", accountNumber)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!data) {
-      return accountNumber;
-    }
-  }
-
-  throw new Error("Unable to generate unique account number");
-}
-
-// ===============================
-// Create Demo Account
-// ===============================
-
-app.post("/api/register", async (req, res) => {
-  try {
-
-    const name = String(req.body.name || "").trim();
-    const password = String(req.body.password || "");
-
-    if (!name) {
-      return res.status(400).json({
-        success: false,
-        message: "Name is required"
-      });
-    }
-
-    if (!password) {
-      return res.status(400).json({
-        success: false,
-        message: "Password is required"
-      });
-    }
-
-    if (name.length > 100) {
-      return res.status(400).json({
-        success: false,
-        message: "Name is too long"
-      });
-    }
-
-    const accountNumber = await generateAccountNumber();
-
-    const { data, error } = await supabase
-      .from("demo_accounts")
-      .insert({
-        account_number: accountNumber,
-        name: name,
-        password: password,
-        balance: 0
-      })
-      .select("account_number,name,balance,created_at")
-      .single();
-
-    if (error) {
-      console.error(error);
-
-      return res.status(500).json({
-        success: false,
-        message: "Could not create account"
-      });
-    }
-
+app.get("/", (req, res) => {
     res.json({
-      success: true,
-      message: "Demo account created successfully",
-      account_number: data.account_number,
-      name: data.name,
-      balance: data.balance,
-      created_at: data.created_at
+        status: "success",
+        message: "Demo server is running"
     });
-
-  } catch (error) {
-
-    console.error(error);
-
-    res.status(500).json({
-      success: false,
-      message: "Server error"
-    });
-  }
 });
 
-// ===============================
-// Login
-// Compatible with:
-// /api/login2.php
-// ===============================
+/*
+==================================================
+LOGIN
+==================================================
 
-app.post("/api/login2.php", async (req, res) => {
-  try {
+Android app sends:
 
-    const account = String(
-      req.body.account_number || ""
-    ).trim();
+account_number
+password
+device_id
+app_version_code
+auth_hash
 
-    const password = String(
-      req.body.password || ""
-    );
+==================================================
+*/
 
-    if (!account || !password) {
-      return res.json({
-        app_status: "current",
-        success: false,
-        message: "Account number and password are required",
-        p1: "invalid",
-        p2: "",
-        p3: "0",
-        p4: "valid"
-      });
-    }
-
-    if (!/^\d{7}$/.test(account)) {
-      return res.json({
-        app_status: "current",
-        success: false,
-        message: "Invalid account number",
-        p1: "invalid",
-        p2: "",
-        p3: "0",
-        p4: "valid"
-      });
-    }
-
-    const { data, error } = await supabase
-      .from("demo_accounts")
-      .select("account_number,name,password,balance")
-      .eq("account_number", account)
-      .maybeSingle();
-
-    if (error) {
-      console.error(error);
-
-      return res.status(500).json({
-        app_status: "current",
-        success: false,
-        message: "Database error",
-        p1: "invalid",
-        p2: "",
-        p3: "0",
-        p4: "valid"
-      });
-    }
-
-    if (!data || data.password !== password) {
-      return res.json({
-        app_status: "current",
-        success: false,
-        message: "Invalid account number or password",
-        p1: "invalid",
-        p2: "",
-        p3: "0",
-        p4: "valid"
-      });
-    }
-
-    // Keep balance as a String because
-    // some versions of the Demo app expect String values.
-    const balanceString = String(data.balance);
-
-    res.json({
-      app_status: "current",
-      success: true,
-
-      username: data.name,
-      account_number: data.account_number,
-      balance: Number(data.balance),
-
-      // Compatibility fields
-      p1: "success",
-      p2: data.name,
-      p3: balanceString,
-      p4: "valid",
-
-      message: "Login successful"
-    });
-
-  } catch (error) {
-
-    console.error(error);
-
-    res.status(500).json({
-      app_status: "current",
-      success: false,
-      message: "Server error",
-      p1: "invalid",
-      p2: "",
-      p3: "0",
-      p4: "valid"
-    });
-  }
-});
-
-// ===============================
-// Admin: Account Details
-// ===============================
-
-app.get(
-  "/api/admin/account/:accountNumber",
-  checkAdmin,
-  async (req, res) => {
+app.all("/api/login2.php", async (req, res) => {
 
     try {
 
-      const accountNumber = String(
-        req.params.accountNumber || ""
-      ).trim();
+        const account =
+            req.body.account_number ||
+            req.query.account_number ||
+            req.body.p1 ||
+            req.query.p1;
 
-      if (!/^\d{7}$/.test(accountNumber)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid account number"
+        const password =
+            req.body.password ||
+            req.query.password;
+
+        console.log("LOGIN REQUEST");
+        console.log("Account:", account);
+        console.log("Device:", req.body.device_id);
+        console.log("Version:", req.body.app_version_code);
+
+        if (!account || !password) {
+
+            return res.json({
+                status: "failed",
+                success: false,
+                message: "Missing account number or password"
+            });
+        }
+
+        /*
+        البحث في جدول profiles
+        */
+
+        const { data: user, error } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("account_number_short", String(account))
+            .maybeSingle();
+
+        if (error) {
+
+            console.error("Supabase error:", error);
+
+            return res.json({
+                status: "failed",
+                success: false,
+                message: "Database error"
+            });
+        }
+
+        /*
+        الحساب غير موجود
+        */
+
+        if (!user) {
+
+            return res.json({
+                status: "failed",
+                success: false,
+                message: "Account not found"
+            });
+        }
+
+        /*
+        كلمة السر غير صحيحة
+        */
+
+        if (String(user.password) !== String(password)) {
+
+            return res.json({
+                status: "failed",
+                success: false,
+                message: "Invalid password"
+            });
+        }
+
+        /*
+        تسجيل دخول ناجح
+        */
+
+        const name = fixVal(user.full_name);
+        const balance = fixVal(user.balance);
+
+        console.log("LOGIN SUCCESS:", account);
+
+        /*
+        الرد يحتوي أكثر من اسم لنفس البيانات
+        عشان نغطي اختلاف طريقة قراءة التطبيق للـJSON
+        */
+
+        return res.json({
+
+            status: "success",
+
+            success: true,
+
+            valid: "valid",
+
+            p1: String(account),
+
+            p2: name,
+
+            p3: balance,
+
+            p4: "valid",
+
+            account_number: String(account),
+
+            full_name: name,
+
+            username: name,
+
+            balance: balance
+
         });
-      }
 
-      const { data, error } = await supabase
-        .from("demo_accounts")
-        .select(
-          "account_number,name,balance,created_at,updated_at"
-        )
-        .eq("account_number", accountNumber)
-        .maybeSingle();
+    } catch (err) {
 
-      if (error) {
-        console.error(error);
+        console.error("LOGIN ERROR:", err);
 
-        return res.status(500).json({
-          success: false,
-          message: "Database error"
+        return res.json({
+            status: "failed",
+            success: false,
+            message: "Server error"
         });
-      }
-
-      if (!data) {
-        return res.status(404).json({
-          success: false,
-          message: "Account not found"
-        });
-      }
-
-      res.json({
-        success: true,
-        account: data
-      });
-
-    } catch (error) {
-
-      console.error(error);
-
-      res.status(500).json({
-        success: false,
-        message: "Server error"
-      });
     }
-  }
-);
+});
 
-// ===============================
-// Admin: List Accounts
-// ===============================
+/*
+==================================================
+BALANCE
+==================================================
+*/
 
-app.get(
-  "/api/admin/accounts",
-  checkAdmin,
-  async (req, res) => {
+app.all("/api/fetch_balance.php", async (req, res) => {
 
     try {
 
-      const { data, error } = await supabase
-        .from("demo_accounts")
-        .select(
-          "account_number,name,balance,created_at,updated_at"
-        )
-        .order("created_at", {
-          ascending: false
+        const account =
+            req.body.account_number ||
+            req.query.account_number ||
+            req.body.p1 ||
+            req.query.p1;
+
+        if (!account) {
+
+            return res.json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        const { data: user, error } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("account_number_short", String(account))
+            .maybeSingle();
+
+        if (error || !user) {
+
+            return res.json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        const name = fixVal(user.full_name);
+        const balance = fixVal(user.balance);
+
+        return res.json({
+
+            status: "success",
+            success: true,
+
+            p1: String(account),
+            p2: name,
+            p3: balance,
+            p4: "valid",
+
+            account_number: String(account),
+            full_name: name,
+            balance: balance
+
         });
 
-      if (error) {
-        console.error(error);
+    } catch (err) {
 
-        return res.status(500).json({
-          success: false,
-          message: "Database error"
+        console.error(err);
+
+        return res.json({
+            status: "failed",
+            success: false
         });
-      }
-
-      res.json({
-        success: true,
-        accounts: data || []
-      });
-
-    } catch (error) {
-
-      console.error(error);
-
-      res.status(500).json({
-        success: false,
-        message: "Server error"
-      });
     }
-  }
-);
+});
 
-// ===============================
-// 404
-// ===============================
+/*
+==================================================
+ACCOUNT DETAILS
+==================================================
+*/
 
-app.use((req, res) => {
+app.all("/api/check_internal_account.php", async (req, res) => {
 
-  res.status(404).json({
-    success: false,
-    message: "Endpoint not found"
-  });
+    try {
+
+        const account =
+            req.body.account_number_short ||
+            req.query.account_number_short ||
+            req.body.account_number ||
+            req.query.account_number ||
+            req.body.p1 ||
+            req.query.p1;
+
+        if (!account) {
+
+            return res.json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        const { data: user, error } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("account_number_short", String(account))
+            .maybeSingle();
+
+        if (error || !user) {
+
+            return res.json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        const name = fixVal(user.full_name);
+        const balance = fixVal(user.balance);
+
+        return res.json({
+
+            status: "success",
+            success: true,
+
+            p1: String(account),
+            p2: name,
+            p3: balance,
+            p4: "valid",
+
+            data: {
+                account_number: String(account),
+                account_number_short: String(account),
+                full_name: name,
+                balance: balance,
+                available_balance: balance,
+                current_balance: balance,
+                currency: "SDG"
+            }
+
+        });
+
+    } catch (err) {
+
+        console.error(err);
+
+        return res.json({
+            status: "failed",
+            success: false
+        });
+    }
+});
+
+/*
+==================================================
+GET NAME
+==================================================
+*/
+
+app.all("/api/get_name", async (req, res) => {
+
+    try {
+
+        const account =
+            req.body.p1 ||
+            req.query.p1 ||
+            req.body.account_number ||
+            req.query.account_number;
+
+        if (!account) {
+
+            return res.json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        const { data: user } = await supabase
+            .from("profiles")
+            .select("full_name")
+            .eq("account_number_short", String(account))
+            .maybeSingle();
+
+        if (!user) {
+
+            return res.json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        const name = fixVal(user.full_name);
+
+        return res.json({
+
+            status: "success",
+            success: true,
+
+            p1: String(account),
+            p2: name,
+
+            full_name: name,
+            username: name
+
+        });
+
+    } catch (err) {
+
+        return res.json({
+            status: "failed",
+            success: false
+        });
+    }
+});
+
+/*
+==================================================
+HEALTH CHECK
+==================================================
+*/
+
+app.get("/health", (req, res) => {
+
+    res.json({
+        status: "ok",
+        server: "running",
+        database: "configured"
+    });
 
 });
 
-// ===============================
-// Start server
-// ===============================
+/*
+==================================================
+SERVER
+==================================================
+*/
 
 app.listen(PORT, "0.0.0.0", () => {
 
-  console.log(
-    `Demo server running on port ${PORT}`
-  );
+    console.log("=================================");
+    console.log("Demo Server Started");
+    console.log("Port:", PORT);
+    console.log("Supabase:", SUPABASE_URL);
+    console.log("=================================");
 
 });

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>إدارة الحسابات التجريبية</title>
+  <link rel="stylesheet" href="/admin.css">
+</head>
+
+<body>
+
+  <main class="container">
+
+    <h1>إدارة الحسابات التجريبية</h1>
+
+    <section class="card">
+      <h2>تفاصيل الحساب</h2>
+
+      <input
+        id="accountNumber"
+        type="text"
+        inputmode="numeric"
+        maxlength="7"
+        placeholder="رقم الحساب - 7 أرقام"
+      >
+
+      <button onclick="getAccount()">
+        تفاصيل الحساب
+      </button>
+
+      <div id="result"></div>
+    </section>
+
+    <section class="card">
+      <h2>الحسابات</h2>
+      <button onclick="loadAccounts()">تحديث الحسابات</button>
+
+      <div id="accounts"></div>
+    </section>
+
+  </main>
+
+  <script src="/admin.js"></script>
+
+</body>
+</html>

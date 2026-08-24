@@ -6,35 +6,41 @@ const { createClient } = require("@supabase/supabase-js");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ======================================================
+// Basic middleware
+// ======================================================
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
 app.use(express.static(path.join(__dirname, "public")));
 
-/*
-==================================================
-SUPABASE
-==================================================
-*/
+// ======================================================
+// Supabase
+// Render Environment Variables:
+//
+// SUPABASE_URL
+// SUPABASE_SERVICE_ROLE_KEY
+// ======================================================
 
-const SUPABASE_URL =
-    process.env.SUPABASE_URL ||
-    "https://xmegksqwdxutsrpdljaq.supabase.co";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY =
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const SUPABASE_KEY =
-    process.env.SUPABASE_KEY ||
-    "sb_publishable_2yjTS1DTrevOGAuRMmzQ3Q_dft1r1RT";
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("ERROR: Missing Supabase environment variables.");
+    process.exit(1);
+}
 
 const supabase = createClient(
     SUPABASE_URL,
-    SUPABASE_KEY
+    SUPABASE_SERVICE_ROLE_KEY
 );
 
-/*
-==================================================
-HELPERS
-==================================================
-*/
+// ======================================================
+// Helpers
+// ======================================================
 
 function fixVal(value) {
     if (value === null || value === undefined) {
@@ -44,11 +50,25 @@ function fixVal(value) {
     return String(value).trim();
 }
 
-/*
-==================================================
-HOME
-==================================================
-*/
+function getParam(req, name) {
+    return (
+        req.body?.[name] ??
+        req.query?.[name] ??
+        ""
+    );
+}
+
+// ======================================================
+// Health check
+// ======================================================
+
+app.get("/health", async (req, res) => {
+    res.json({
+        status: "ok",
+        server: "running",
+        database: "configured"
+    });
+});
 
 app.get("/", (req, res) => {
     res.json({
@@ -57,76 +77,77 @@ app.get("/", (req, res) => {
     });
 });
 
-/*
-==================================================
-LOGIN
-==================================================
+// ======================================================
+// LOGIN
+//
+// Android request:
+//
+// POST /api/login2.php
+//
+// account_number=1000001
+// password=1234
+// device_id=...
+// app_version_code=29
+// auth_hash=...
+// ======================================================
 
-Android app sends:
-
-account_number
-password
-device_id
-app_version_code
-auth_hash
-
-==================================================
-*/
-
-app.all("/api/login2.php", async (req, res) => {
-
+app.post("/api/login2.php", async (req, res) => {
     try {
+        const account = fixVal(
+            getParam(req, "account_number")
+        );
 
-        const account =
-            req.body.account_number ||
-            req.query.account_number ||
-            req.body.p1 ||
-            req.query.p1;
+        const password = fixVal(
+            getParam(req, "password")
+        );
 
-        const password =
-            req.body.password ||
-            req.query.password;
+        const deviceId = fixVal(
+            getParam(req, "device_id")
+        );
 
+        const appVersionCode = fixVal(
+            getParam(req, "app_version_code")
+        );
+
+        const authHash = fixVal(
+            getParam(req, "auth_hash")
+        );
+
+        console.log("=================================");
         console.log("LOGIN REQUEST");
         console.log("Account:", account);
-        console.log("Device:", req.body.device_id);
-        console.log("Version:", req.body.app_version_code);
+        console.log("Device:", deviceId);
+        console.log("App Version:", appVersionCode);
+        console.log("Auth hash received:", authHash ? "YES" : "NO");
+        console.log("=================================");
 
         if (!account || !password) {
-
-            return res.json({
+            return res.status(400).json({
                 status: "failed",
                 success: false,
                 message: "Missing account number or password"
             });
         }
 
-        /*
-        البحث في جدول profiles
-        */
-
+        // Search account
         const { data: user, error } = await supabase
             .from("profiles")
             .select("*")
-            .eq("account_number_short", String(account))
+            .eq("account_number_short", account)
             .maybeSingle();
 
         if (error) {
-
             console.error("Supabase error:", error);
 
-            return res.json({
+            return res.status(500).json({
                 status: "failed",
                 success: false,
                 message: "Database error"
             });
         }
 
-        /*
-        الحساب غير موجود
-        */
-
         if (!user) {
+            console.log("LOGIN FAILED: account not found");
 
             return res.json({
                 status: "failed",
@@ -135,64 +156,45 @@ app.all("/api/login2.php", async (req, res) => {
             });
         }
 
-        /*
-        كلمة السر غير صحيحة
-        */
-
-        if (String(user.password) !== String(password)) {
+        // Demo login password check
+        if (String(user.password) !== password) {
+            console.log("LOGIN FAILED: wrong password");
 
             return res.json({
                 status: "failed",
                 success: false,
-                message: "Invalid password"
+                message: "Wrong password"
             });
         }
 
-        /*
-        تسجيل دخول ناجح
-        */
-
-        const name = fixVal(user.full_name);
+        const fullName = fixVal(user.full_name);
         const balance = fixVal(user.balance);
 
         console.log("LOGIN SUCCESS:", account);
+        console.log("Name:", fullName);
+        console.log("Balance:", balance);
 
-        /*
-        الرد يحتوي أكثر من اسم لنفس البيانات
-        عشان نغطي اختلاف طريقة قراءة التطبيق للـJSON
-        */
-
+        // Response compatible with the values
+        // already expected by the demo application.
         return res.json({
-
             status: "success",
-
             success: true,
 
-            valid: "valid",
-
-            p1: String(account),
-
-            p2: name,
-
+            p1: account,
+            p2: fullName,
             p3: balance,
-
             p4: "valid",
 
-            account_number: String(account),
-
-            full_name: name,
-
-            username: name,
-
-            balance: balance
-
+            account_number: account,
+            full_name: fullName,
+            balance: balance,
+            username: fullName
         });
 
-    } catch (err) {
+    } catch (error) {
+        console.error("LOGIN ERROR:", error);
 
-        console.error("LOGIN ERROR:", err);
-
-        return res.json({
+        return res.status(500).json({
             status: "failed",
             success: false,
             message: "Server error"
@@ -200,240 +202,198 @@ app.all("/api/login2.php", async (req, res) => {
     }
 });
 
-/*
-==================================================
-BALANCE
-==================================================
-*/
+// ======================================================
+// Optional compatibility path
+// ======================================================
 
-app.all("/api/fetch_balance.php", async (req, res) => {
+app.post("/api/login", async (req, res) => {
+    req.url = "/api/login2.php";
 
     try {
+        const account = fixVal(
+            getParam(req, "account_number")
+        );
 
-        const account =
-            req.body.account_number ||
-            req.query.account_number ||
-            req.body.p1 ||
-            req.query.p1;
-
-        if (!account) {
-
-            return res.json({
-                status: "failed",
-                success: false
-            });
-        }
+        const password = fixVal(
+            getParam(req, "password")
+        );
 
         const { data: user, error } = await supabase
             .from("profiles")
             .select("*")
-            .eq("account_number_short", String(account))
+            .eq("account_number_short", account)
             .maybeSingle();
 
-        if (error || !user) {
+        if (error) {
+            console.error(error);
 
+            return res.status(500).json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        if (!user || String(user.password) !== password) {
             return res.json({
                 status: "failed",
                 success: false
             });
         }
 
-        const name = fixVal(user.full_name);
+        const fullName = fixVal(user.full_name);
         const balance = fixVal(user.balance);
 
         return res.json({
-
             status: "success",
             success: true,
-
-            p1: String(account),
-            p2: name,
+            p1: account,
+            p2: fullName,
             p3: balance,
             p4: "valid",
-
-            account_number: String(account),
-            full_name: name,
-            balance: balance
-
+            account_number: account,
+            full_name: fullName,
+            balance: balance,
+            username: fullName
         });
 
-    } catch (err) {
+    } catch (error) {
+        console.error("LOGIN ERROR:", error);
 
-        console.error(err);
-
-        return res.json({
+        return res.status(500).json({
             status: "failed",
             success: false
         });
     }
 });
 
-/*
-==================================================
-ACCOUNT DETAILS
-==================================================
-*/
+// ======================================================
+// Account details
+// ======================================================
 
-app.all("/api/check_internal_account.php", async (req, res) => {
-
+app.all("/api/fetch_account_details", async (req, res) => {
     try {
-
         const account =
-            req.body.account_number_short ||
-            req.query.account_number_short ||
-            req.body.account_number ||
-            req.query.account_number ||
-            req.body.p1 ||
-            req.query.p1;
-
-        if (!account) {
-
-            return res.json({
-                status: "failed",
-                success: false
-            });
-        }
+            getParam(req, "account_number_short") ||
+            getParam(req, "account_number") ||
+            getParam(req, "p1");
 
         const { data: user, error } = await supabase
             .from("profiles")
             .select("*")
-            .eq("account_number_short", String(account))
+            .eq("account_number_short", account)
             .maybeSingle();
 
-        if (error || !user) {
+        if (error) {
+            console.error(error);
 
+            return res.status(500).json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        if (!user) {
             return res.json({
                 status: "failed",
                 success: false
             });
         }
 
-        const name = fixVal(user.full_name);
+        const fullName = fixVal(user.full_name);
         const balance = fixVal(user.balance);
 
         return res.json({
-
             status: "success",
             success: true,
-
-            p1: String(account),
-            p2: name,
+            p1: fixVal(account),
+            p2: fullName,
             p3: balance,
             p4: "valid",
 
             data: {
-                account_number: String(account),
-                account_number_short: String(account),
-                full_name: name,
+                account_number_full: fixVal(account),
+                account_number_short: fixVal(account),
+                full_name: fullName,
                 balance: balance,
                 available_balance: balance,
                 current_balance: balance,
                 currency: "SDG"
             }
-
         });
 
-    } catch (err) {
+    } catch (error) {
+        console.error("ACCOUNT DETAILS ERROR:", error);
 
-        console.error(err);
-
-        return res.json({
+        return res.status(500).json({
             status: "failed",
             success: false
         });
     }
 });
 
-/*
-==================================================
-GET NAME
-==================================================
-*/
+// ======================================================
+// Get account name
+// ======================================================
 
 app.all("/api/get_name", async (req, res) => {
-
     try {
-
         const account =
-            req.body.p1 ||
-            req.query.p1 ||
-            req.body.account_number ||
-            req.query.account_number;
+            getParam(req, "account_number") ||
+            getParam(req, "account_number_short") ||
+            getParam(req, "p1");
 
-        if (!account) {
-
-            return res.json({
-                status: "failed",
-                success: false
-            });
-        }
-
-        const { data: user } = await supabase
+        const { data: user, error } = await supabase
             .from("profiles")
             .select("full_name")
-            .eq("account_number_short", String(account))
+            .eq("account_number_short", account)
             .maybeSingle();
 
-        if (!user) {
+        if (error) {
+            console.error(error);
 
+            return res.status(500).json({
+                status: "failed",
+                success: false
+            });
+        }
+
+        if (!user) {
             return res.json({
                 status: "failed",
                 success: false
             });
         }
 
-        const name = fixVal(user.full_name);
+        const fullName = fixVal(user.full_name);
 
         return res.json({
-
             status: "success",
             success: true,
-
-            p1: String(account),
-            p2: name,
-
-            full_name: name,
-            username: name
-
+            p2: fullName,
+            full_name: fullName
         });
 
-    } catch (err) {
+    } catch (error) {
+        console.error("GET NAME ERROR:", error);
 
-        return res.json({
+        return res.status(500).json({
             status: "failed",
             success: false
         });
     }
 });
 
-/*
-==================================================
-HEALTH CHECK
-==================================================
-*/
-
-app.get("/health", (req, res) => {
-
-    res.json({
-        status: "ok",
-        server: "running",
-        database: "configured"
-    });
-
-});
-
-/*
-==================================================
-SERVER
-==================================================
-*/
+// ======================================================
+// Start server
+// ======================================================
 
 app.listen(PORT, "0.0.0.0", () => {
-
     console.log("=================================");
-    console.log("Demo Server Started");
+    console.log("Demo server started");
     console.log("Port:", PORT);
-    console.log("Supabase:", SUPABASE_URL);
+    console.log("Login endpoint:");
+    console.log("/api/login2.php");
+    console.log("Health:");
+    console.log("/health");
     console.log("=================================");
-
 });
